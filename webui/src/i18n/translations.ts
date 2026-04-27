@@ -5,6 +5,7 @@ const APP_TITLE_EN = "Resin · Sticky Proxy Pool";
 
 const EXACT_ZH_TO_EN: Record<string, string> = {
   "Resin · 高性能粘性代理池": APP_TITLE_EN,
+  "高性能粘性代理池": "High-performance sticky proxy pool",
   "高性能粘性代理池 · 管理面板": "High-performance sticky proxy pool · Admin Console",
   "主导航": "Main Navigation",
   "切换语言": "Switch Language",

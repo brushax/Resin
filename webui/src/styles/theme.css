@@ -84,7 +84,7 @@ a {
 .app-layout {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
+  grid-template-columns: 252px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -94,7 +94,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 18px;
-  padding: 24px 18px;
+  padding: 24px 16px;
   border-right: 1px solid var(--border);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 251, 255, 0.95));
   backdrop-filter: blur(10px);
