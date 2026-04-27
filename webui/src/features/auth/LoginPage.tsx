@@ -13,7 +13,7 @@ import { apiRequest, ApiError } from "../../lib/api-client";
 import { useI18n } from "../../i18n";
 
 const formSchema = z.object({
-  token: z.string().trim().min(1, "请输入 Admin Token"),
+  password: z.string().trim().min(1, "请输入 Admin Token"),
 });
 
 type LoginFormInput = z.infer<typeof formSchema>;
@@ -33,7 +33,7 @@ export function LoginPage() {
     formState: { errors, isSubmitting },
   } = useForm<LoginFormInput>({
     resolver: zodResolver(formSchema),
-    defaultValues: { token: "" },
+    defaultValues: { password: "" },
   });
 
   useEffect(() => {
@@ -78,7 +78,7 @@ export function LoginPage() {
     try {
       await apiRequest("/api/v1/system/info", {
         auth: true,
-        token: values.token,
+        token: values.password,
       });
     } catch (error) {
       if (error instanceof ApiError) {
@@ -89,7 +89,7 @@ export function LoginPage() {
       return;
     }
 
-    setToken(values.token);
+    setToken(values.password);
 
     const params = new URLSearchParams(location.search);
     const next = params.get("next") || "/platforms";
@@ -109,7 +109,9 @@ export function LoginPage() {
           <LanguageSwitcher className="login-locale" />
         </div>
 
-        <form className="login-form" onSubmit={onSubmit}>
+        <p className="login-description">{t("输入后端 `RESIN_ADMIN_TOKEN` 进入控制台。")}</p>
+
+        <form className="login-form" onSubmit={onSubmit} autoComplete="on">
           <label className="field-label field-label-with-info login-token-label" htmlFor="token">
             <span>{t("管理员令牌")}</span>
             <span
@@ -125,10 +127,14 @@ export function LoginPage() {
             <Input
               id="token"
               className="login-token-input"
-              autoComplete="off"
               type={isPasswordVisible ? "text" : "password"}
-              invalid={Boolean(errors.token)}
-              {...register("token")}
+              placeholder={t("粘贴 Bearer Token（仅本地保存）")}
+              autoComplete="current-password"
+              autoCapitalize="none"
+              autoCorrect="off"
+              spellCheck={false}
+              invalid={Boolean(errors.password)}
+              {...register("password")}
             />
             <Button
               variant="ghost"
@@ -142,7 +148,7 @@ export function LoginPage() {
             </Button>
           </div>
 
-          {errors.token?.message ? <p className="field-error">{t(errors.token.message)}</p> : null}
+          {errors.password?.message ? <p className="field-error">{t(errors.password.message)}</p> : null}
           {submitError ? <p className="field-error">{submitError}</p> : null}
 
           <Button type="submit" className="w-full login-submit" disabled={isSubmitting}>
