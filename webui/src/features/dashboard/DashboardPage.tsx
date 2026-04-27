@@ -119,8 +119,8 @@ function formatBytesPerSecond(value: number, compact = false): string {
   const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
   let next = value;
   let unitIndex = 0;
-  while (next >= 1000 && unitIndex < units.length - 1) {
-    next /= 1000;
+  while (next >= 1024 && unitIndex < units.length - 1) {
+    next /= 1024;
     unitIndex += 1;
   }
   return `${next.toFixed(next >= 100 ? 0 : 1)}${compact ? "" : " "}${units[unitIndex]}`;
