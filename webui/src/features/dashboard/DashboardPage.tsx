@@ -124,23 +124,23 @@ function formatPercent(value: number): string {
   return `${(value * 100).toFixed(1)}%`;
 }
 
-function formatBps(value: number): string {
-  const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+function formatThroughput(value: number): string {
+  const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
   let next = value;
   let unitIndex = 0;
-  while (next >= 1000 && unitIndex < units.length - 1) {
-    next /= 1000;
+  while (next >= 1024 && unitIndex < units.length - 1) {
+    next /= 1024;
     unitIndex += 1;
   }
   return `${next.toFixed(next >= 100 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
-function formatShortBps(value: number): string {
-  const units = ["bps", "Kbps", "Mbps", "Gbps", "Tbps"];
+function formatShortThroughput(value: number): string {
+  const units = ["B/s", "KB/s", "MB/s", "GB/s", "TB/s"];
   let next = value;
   let unitIndex = 0;
-  while (next >= 1000 && unitIndex < units.length - 1) {
-    next /= 1000;
+  while (next >= 1024 && unitIndex < units.length - 1) {
+    next /= 1024;
     unitIndex += 1;
   }
   return `${next.toFixed(next >= 100 ? 0 : 1)}${units[unitIndex]}`;
@@ -918,9 +918,9 @@ export function DashboardPage() {
           </div>
           <div>
             <p className="dashboard-kpi-label">{t("实时吞吐")}</p>
-            <p className="dashboard-kpi-value">{formatBps(latestIngress + latestEgress)}</p>
+            <p className="dashboard-kpi-value">{formatThroughput(latestIngress + latestEgress)}</p>
             <p className="dashboard-kpi-sub">
-              {t("下载")} {formatBps(latestIngress)} · {t("上传")} {formatBps(latestEgress)}
+              {t("下载")} {formatThroughput(latestIngress)} · {t("上传")} {formatThroughput(latestEgress)}
             </p>
           </div>
         </Card>
@@ -970,11 +970,11 @@ export function DashboardPage() {
         <Card className="dashboard-panel span-2">
           <div className="dashboard-panel-header">
             <h3>{t("吞吐趋势")}</h3>
-            <p>{t("实时下载 / 上传速率（bps）")}</p>
+            <p>{t("实时下载 / 上传速率（B/s）")}</p>
           </div>
           <TrendChart
             labels={throughputLabels}
-            formatYAxisLabel={formatShortBps}
+            formatYAxisLabel={formatShortThroughput}
             series={[
               {
                 name: t("下载速率"),

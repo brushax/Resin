@@ -439,7 +439,7 @@ const EXACT_ZH_TO_EN: Record<string, string> = {
   "实时连接数": "Realtime connections",
   "实时入站 / 出站连接": "Realtime inbound / outbound connections",
   "实时吞吐": "Realtime throughput",
-  "实时下载 / 上传速率（bps）": "Realtime download / upload rate (bps)",
+  "实时下载 / 上传速率（B/s）": "Realtime download / upload rate (B/s)",
   "输入 IP 后点击查询。": "Enter an IP and click query.",
   "数据缓存目录": "Data cache directory",
   "数据库保留阈值": "Database retention threshold",
