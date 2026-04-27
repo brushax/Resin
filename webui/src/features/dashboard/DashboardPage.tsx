@@ -965,7 +965,7 @@ export function DashboardPage() {
         <Card className="dashboard-panel span-2">
           <div className="dashboard-panel-header">
             <h3>{t("吞吐趋势")}</h3>
-            <p>{t("实时下载 / 上传速率（B/s）")}</p>
+            <p>{t("实时下载 / 上传速率")}</p>
           </div>
           <TrendChart
             labels={throughputLabels}
@@ -1098,7 +1098,7 @@ export function DashboardPage() {
         <Card className="dashboard-panel">
           <div className="dashboard-panel-header">
             <h3>{t("流量累计")}</h3>
-            <p>{t("窗口内下载 / 上传流量（字节）")}</p>
+            <p>{t("窗口内下载 / 上传流量")}</p>
           </div>
           <TrendChart
             labels={trafficLabels}

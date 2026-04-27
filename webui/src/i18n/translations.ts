@@ -432,7 +432,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "出口 IP 更新检查间隔": "Egress IP refresh check interval",
   "出口 IP 数": "Egress IP count",
   "出口探测": "Egress probe",
-  "窗口内下载 / 上传流量（字节）": "Download / upload traffic in window (bytes)",
+  "窗口内下载 / 上传流量": "Download / upload traffic in window",
   "代理传输最大空闲连接": "Max idle proxy transport connections",
   "单主机最大空闲连接": "Max idle connections per host",
   "当前加载时间与下一次计划更新时间":
@@ -530,7 +530,7 @@ Note: Once enabled, requests without authentication information are rejected ins
   "实时连接数": "Realtime connections",
   "实时入站 / 出站连接": "Realtime inbound / outbound connections",
   "实时吞吐": "Realtime throughput",
-  "实时下载 / 上传速率（B/s）": "Realtime download / upload rate (B/s)",
+  "实时下载 / 上传速率": "Realtime download / upload rate",
   "输入 IP 后点击查询。": "Enter an IP and click query.",
   "数据缓存目录": "Data cache directory",
   "数据库保留阈值": "Database retention threshold",
