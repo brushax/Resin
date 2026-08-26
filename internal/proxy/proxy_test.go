@@ -197,6 +197,7 @@ func TestForwardProxy_AuthFailed(t *testing.T) {
 	req := httptest.NewRequest("GET", "http://example.com/", nil)
 	req.Header.Set("Proxy-Authorization", basicAuth("plat.acct", "wrong-token"))
 	req.Header.Set("X-Resin-Account", "header-account")
+	req.Header.Set("X-Resin-Platform", "header-platform")
 	w := httptest.NewRecorder()
 	fp.ServeHTTP(w, req)
 
@@ -231,6 +232,24 @@ func TestResolveForwardProxyAccount_AbsentHeaderPreservesAuthenticatedAccount(t 
 
 	if got := resolveForwardProxyAccount(req, "auth-account"); got != "auth-account" {
 		t.Fatalf("account: got %q, want %q", got, "auth-account")
+	}
+}
+
+func TestResolveForwardProxyPlatform_HeaderSuppliesMissingAuthenticatedPlatform(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	req.Header.Set("X-Resin-Platform", "header-platform")
+
+	if got := resolveForwardProxyPlatform(req, ""); got != "header-platform" {
+		t.Fatalf("platform: got %q, want %q", got, "header-platform")
+	}
+}
+
+func TestResolveForwardProxyPlatform_AuthenticatedPlatformWinsOverHeader(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "http://example.com/", nil)
+	req.Header.Set("X-Resin-Platform", "header-platform")
+
+	if got := resolveForwardProxyPlatform(req, "auth-platform"); got != "auth-platform" {
+		t.Fatalf("platform: got %q, want %q", got, "auth-platform")
 	}
 }
 
@@ -463,6 +482,7 @@ func TestPrepareForwardOutboundRequest_NormalizesClientCloseAndHeaders(t *testin
 	req.Close = true
 	req.Header.Set("Proxy-Authorization", "Basic xxx")
 	req.Header.Set("X-Resin-Account", "header-account")
+	req.Header.Set("X-Resin-Platform", "header-platform")
 	req.Header.Set("Connection", "close, X-Custom-Header")
 	req.Header.Set("X-Custom-Header", "value")
 	req.Header.Set("X-Normal-Header", "keep")
@@ -484,6 +504,9 @@ func TestPrepareForwardOutboundRequest_NormalizesClientCloseAndHeaders(t *testin
 	if out.Header.Get("X-Resin-Account") != "" {
 		t.Fatal("X-Resin-Account should be stripped")
 	}
+	if out.Header.Get("X-Resin-Platform") != "" {
+		t.Fatal("X-Resin-Platform should be stripped")
+	}
 	if out.Header.Get("X-Custom-Header") != "" {
 		t.Fatal("connection-listed header should be stripped")
 	}
@@ -503,6 +526,9 @@ func TestPrepareForwardOutboundRequest_NormalizesClientCloseAndHeaders(t *testin
 	}
 	if req.Header.Get("X-Resin-Account") == "" {
 		t.Fatal("original X-Resin-Account should remain unchanged")
+	}
+	if req.Header.Get("X-Resin-Platform") == "" {
+		t.Fatal("original X-Resin-Platform should remain unchanged")
 	}
 	if req.Header.Get("X-Custom-Header") == "" {
 		t.Fatal("original custom header should remain unchanged")

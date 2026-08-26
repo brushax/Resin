@@ -240,6 +240,11 @@ curl -x http://127.0.0.1:2260 \
   --proxy-header "X-Resin-Account: user_tom" \
   https://api.ipify.org
 ```
+For HTTP forward proxy clients, `X-Resin-Platform` can supply the Platform
+when the authenticated identity does not contain one. An explicit Platform in
+`Proxy-Authorization` takes precedence. The header is consumed by Resin and
+removed before normal HTTP forwarding; it is also accepted on HTTPS `CONNECT`
+during tunnel setup.
 
 #### Method 2: Reverse proxy (URL Account, quick/manual debug)
 
