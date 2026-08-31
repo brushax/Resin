@@ -2,7 +2,7 @@ package outbound
 
 import anytlsutil "github.com/anytls/sing-anytls/util"
 
-// sing-anytls v0.0.13 unconditionally puts
+// sing-box v1.12.21 uses sing-anytls, which unconditionally puts
 // "sing-anytls/<version>" in the AnyTLS settings frame. Some providers use
 // that field to identify and reject clients using the official library
 // (Mihomo leaves it empty). The field is not used for protocol negotiation,
@@ -10,5 +10,7 @@ import anytlsutil "github.com/anytls/sing-anytls/util"
 // created. Remove this shim when the sing-box dependency is upgraded to a
 // version that defaults client metadata to an empty string.
 func init() {
+	// The exported symbol was misspelled "Verison" until sing-anytls v0.0.12;
+	// keep this reference in sync with the pinned dependency version.
 	anytlsutil.Version = ""
 }
