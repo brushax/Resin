@@ -45,6 +45,12 @@ type ForwardProxy struct {
 	bypass            *TargetBypassMatcher
 }
 
+type forwardAuthResult struct {
+	PlatformName string
+	Account      string
+	Override     routeOverride
+}
+
 // NewForwardProxy creates a new forward proxy handler.
 func NewForwardProxy(cfg ForwardProxyConfig) *ForwardProxy {
 	ev := cfg.Events
@@ -99,31 +105,53 @@ func (p *ForwardProxy) authenticate(r *http.Request) (string, string, *ProxyErro
 }
 
 func (p *ForwardProxy) authenticateV1(r *http.Request) (string, string, *ProxyError) {
+	result, err := p.authenticateRouteV1(r)
+	if err != nil {
+		return "", "", err
+	}
+	return result.PlatformName, result.Account, nil
+}
+
+func (p *ForwardProxy) authenticateRouteV1(r *http.Request) (forwardAuthResult, *ProxyError) {
 	auth := r.Header.Get("Proxy-Authorization")
 	if p.token == "" {
 		credential, ok := parseProxyAuthorizationCredentialV1(auth)
 		if !ok {
 			if requireProxyAuthInfo(r) {
-				return "", "", ErrAuthRequired
+				return forwardAuthResult{}, ErrAuthRequired
 			}
-			return "", "", nil
+			return forwardAuthResult{Override: routeOverrideFromHeader(r)}, nil
 		}
 		if requireProxyAuthInfo(r) && !hasBasicUserInfo(credential) {
-			return "", "", ErrAuthRequired
+			return forwardAuthResult{}, ErrAuthRequired
 		}
-		platName, account := parseForwardCredentialV1WhenAuthDisabled(credential)
-		return platName, account, nil
+		override, _, platName, account := parseForwardCredentialV1RouteOverride(credential)
+		if override.NodeHash == "" {
+			platName, account = parseForwardCredentialV1WhenAuthDisabled(credential)
+			override = routeOverrideFromHeader(r)
+		}
+		return forwardAuthResult{PlatformName: platName, Account: account, Override: override}, nil
 	}
 
 	credential, ok := parseProxyAuthorizationCredentialV1(auth)
 	if !ok {
-		return "", "", ErrAuthRequired
+		return forwardAuthResult{}, ErrAuthRequired
 	}
-	token, platName, account := parseForwardCredentialV1(credential)
+	override, token, platName, account := parseForwardCredentialV1RouteOverride(credential)
 	if token != p.token {
-		return "", "", ErrAuthFailed
+		return forwardAuthResult{}, ErrAuthFailed
 	}
-	return platName, account, nil
+	if override.NodeHash == "" {
+		override = routeOverrideFromHeader(r)
+	}
+	return forwardAuthResult{PlatformName: platName, Account: account, Override: override}, nil
+}
+
+func routeOverrideFromHeader(r *http.Request) routeOverride {
+	if r == nil {
+		return routeOverride{}
+	}
+	return routeOverride{NodeHash: strings.TrimSpace(r.Header.Get("X-Resin-Node-Hash"))}
 }
 
 // resolveForwardProxyAccount applies the optional HTTP forward-proxy account
@@ -241,25 +269,26 @@ func prepareForwardOutboundRequest(in *http.Request) *http.Request {
 	// Do not propagate client-side close semantics to upstream transport reuse.
 	req.Close = false
 	stripHopByHopHeaders(req.Header)
-	// This header controls Resin routing and must not be exposed to the target.
+	// These headers control Resin routing and must not be exposed to the target.
 	req.Header.Del("X-Resin-Account")
 	req.Header.Del("X-Resin-Platform")
+	req.Header.Del("X-Resin-Node-Hash")
 	return req
 }
 
 func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
-	platName, account, authErr := p.authenticate(r)
+	auth, authErr := p.authenticateRouteV1(r)
 	if authErr != nil {
 		writeProxyError(w, authErr)
 		return
 	}
-	account = resolveForwardProxyAccount(r, account)
-	platName = resolveForwardProxyPlatform(r, platName)
+	auth.PlatformName = resolveForwardProxyPlatform(r, auth.PlatformName)
+	auth.Account = resolveForwardProxyAccount(r, auth.Account)
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, false)
 	lifecycle.setTarget(r.Host, r.URL.String())
 	defer lifecycle.finish()
-	lifecycle.setAccount(account)
+	lifecycle.setAccount(auth.Account)
 
 	var route routing.RouteResult
 	var hasRoute bool
@@ -267,7 +296,7 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.bypass != nil && p.bypass.ShouldBypass(r.Host) {
 		transport = p.directHTTPTransport()
 	} else {
-		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, platName, account, r.Host)
+		routed, routeErr := resolveRoutedOutbound(p.router, p.pool, auth.PlatformName, auth.Account, r.Host, auth.Override)
 		if routeErr != nil {
 			lifecycle.setProxyError(routeErr)
 			lifecycle.setHTTPStatus(routeErr.HTTPCode)
@@ -348,18 +377,18 @@ func (p *ForwardProxy) handleHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 	target := r.Host
-	platName, account, authErr := p.authenticate(r)
+	auth, authErr := p.authenticateRouteV1(r)
 	if authErr != nil {
 		writeProxyError(w, authErr)
 		return
 	}
-	account = resolveForwardProxyAccount(r, account)
-	platName = resolveForwardProxyPlatform(r, platName)
+	auth.PlatformName = resolveForwardProxyPlatform(r, auth.PlatformName)
+	auth.Account = resolveForwardProxyAccount(r, auth.Account)
 
 	lifecycle := newRequestLifecycle(p.events, r, ProxyTypeForward, true)
 	lifecycle.setTarget(target, "")
 	defer lifecycle.finish()
-	lifecycle.setAccount(account)
+	lifecycle.setAccount(auth.Account)
 
 	prepare := prepareConnectTunnel(
 		r.Context(),
@@ -370,11 +399,12 @@ func (p *ForwardProxy) handleCONNECT(w http.ResponseWriter, r *http.Request) {
 			metricsSink: p.metricsSink,
 			bypass:      p.bypass,
 		},
-		platName,
-		account,
+		auth.PlatformName,
+		auth.Account,
 		target,
+		auth.Override,
 	)
-	if prepare.route.PlatformID != "" {
+	if !prepare.route.NodeHash.IsZero() {
 		lifecycle.setRouteResult(prepare.route)
 	}
 	if prepare.session == nil {
