@@ -90,6 +90,43 @@ func TestRoutableView_RandomPick_Distribution(t *testing.T) {
 	}
 }
 
+func TestRoutableView_RoundRobinPick_Cycles(t *testing.T) {
+	rv := NewRoutableView()
+	hashes := make([]node.Hash, 3)
+	for i := range hashes {
+		hashes[i] = makeHash(`{"type":"ss","idx":` + strconv.Itoa(i) + `}`)
+		rv.Add(hashes[i])
+	}
+
+	firstCycle := make([]node.Hash, 3)
+	for i := range firstCycle {
+		got, ok := rv.RoundRobinPick()
+		if !ok {
+			t.Fatalf("pick %d failed", i)
+		}
+		firstCycle[i] = got
+	}
+
+	// Second cycle should repeat the same order.
+	for i := range firstCycle {
+		got, ok := rv.RoundRobinPick()
+		if !ok {
+			t.Fatalf("second cycle pick %d failed", i)
+		}
+		if got != firstCycle[i] {
+			t.Fatalf("round robin cycle mismatch at %d: got %s, want %s", i, got.Hex(), firstCycle[i].Hex())
+		}
+	}
+}
+
+func TestRoutableView_RoundRobinPick_Empty(t *testing.T) {
+	rv := NewRoutableView()
+	_, ok := rv.RoundRobinPick()
+	if ok {
+		t.Fatal("should return ok=false for empty view")
+	}
+}
+
 func TestRoutableView_Clear(t *testing.T) {
 	rv := NewRoutableView()
 	for i := 0; i < 10; i++ {

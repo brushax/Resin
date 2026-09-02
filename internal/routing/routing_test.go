@@ -127,6 +127,53 @@ func TestRandomRoute_SingleNode(t *testing.T) {
 	}
 }
 
+func TestRandomRoute_RoundRobin(t *testing.T) {
+	pool, subMgr := setupPool(t)
+	h1 := makeRoutableNode(t, pool, subMgr, `{"rr":"1"}`, "10.0.0.1", "cloudflare.com", 50*time.Millisecond)
+	h2 := makeRoutableNode(t, pool, subMgr, `{"rr":"2"}`, "10.0.0.2", "cloudflare.com", 50*time.Millisecond)
+	h3 := makeRoutableNode(t, pool, subMgr, `{"rr":"3"}`, "10.0.0.3", "cloudflare.com", 50*time.Millisecond)
+
+	plat, ok := pool.GetPlatform(platID)
+	if !ok {
+		t.Fatal("platform not found")
+	}
+	plat.AllocationPolicy = platform.AllocationPolicyRoundRobin
+
+	router := makeRouter(pool, nil)
+
+	firstCycle := make([]node.Hash, 3)
+	for i := range firstCycle {
+		res, err := router.RouteRequest(platName, "", "example.com")
+		if err != nil {
+			t.Fatalf("route %d: %v", i, err)
+		}
+		firstCycle[i] = res.NodeHash
+	}
+
+	seen := map[node.Hash]bool{h1: false, h2: false, h3: false}
+	for _, h := range firstCycle {
+		if _, ok := seen[h]; !ok {
+			t.Fatalf("unexpected hash %s in first cycle", h.Hex())
+		}
+		seen[h] = true
+	}
+	for h, picked := range seen {
+		if !picked {
+			t.Fatalf("node %s not picked in first cycle", h.Hex())
+		}
+	}
+
+	for i := range firstCycle {
+		res, err := router.RouteRequest(platName, "", "example.com")
+		if err != nil {
+			t.Fatalf("second cycle route %d: %v", i, err)
+		}
+		if res.NodeHash != firstCycle[i] {
+			t.Fatalf("round robin mismatch at %d: got %s, want %s", i, res.NodeHash.Hex(), firstCycle[i].Hex())
+		}
+	}
+}
+
 func TestRandomRoute_MultipleNodes(t *testing.T) {
 	pool, subMgr := setupPool(t)
 	h1 := makeRoutableNode(t, pool, subMgr, `{"multi":"1"}`, "10.0.0.1", "cloudflare.com", 50*time.Millisecond)
