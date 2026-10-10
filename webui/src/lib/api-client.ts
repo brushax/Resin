@@ -25,6 +25,17 @@ export class ApiError extends Error {
   }
 }
 
+type UnauthorizedHandler = () => void;
+
+let unauthorizedHandler: UnauthorizedHandler | null = null;
+
+// The auth layer registers a handler that drops the stored session and
+// redirects to the login page, so a rotated RESIN_ADMIN_TOKEN no longer
+// leaves pages stuck in a fake "logged in" state (issue #83).
+export function setUnauthorizedHandler(handler: UnauthorizedHandler | null): void {
+  unauthorizedHandler = handler;
+}
+
 type RequestOptions = {
   method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: JsonValue;
@@ -79,6 +90,11 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
     const parsed = await parseErrorBody(response);
     const code = parsed?.error?.code ?? "HTTP_ERROR";
     const message = parsed?.error?.message ?? response.statusText;
+    // Skip the handler for login probes, which pass an explicit candidate
+    // token and must surface errors inline instead of triggering logout.
+    if (response.status === 401 && auth && token === undefined && unauthorizedHandler) {
+      unauthorizedHandler();
+    }
     throw new ApiError(response.status, code, message, parsed);
   }
 
