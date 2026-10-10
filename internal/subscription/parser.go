@@ -1300,12 +1300,8 @@ func convertClashProxyToNode(proxy map[string]any) (ParsedNode, bool) {
 		if alpn := getStringSlice(proxy, "alpn"); len(alpn) > 0 {
 			tls["alpn"] = alpn
 		}
-		applyUTLSFromValue(tls, firstNonEmpty(
-			getString(proxy, "fingerprint"),
-			getString(proxy, "client-fingerprint"),
-			getString(proxy, "client_fingerprint"),
-			getString(proxy, "fp"),
-		))
+		// Hysteria2 runs over QUIC; sing-box rejects tls.utls there
+		// ("unsupported usage for uTLS"), so client fingerprints are dropped.
 		applyTLSCertificateFromClash(tls, proxy)
 		outbound := map[string]any{
 			"type":        "hysteria2",
@@ -1460,12 +1456,8 @@ func convertClashProxyToNode(proxy map[string]any) (ParsedNode, bool) {
 		))
 		insecure, _ := getBool(proxy, "skip-cert-verify", "allowInsecure", "insecure")
 		tls := newClashEnabledTLS(sni, insecure, getStringSlice(proxy, "alpn"))
-		applyUTLSFromValue(tls, firstNonEmpty(
-			getString(proxy, "fingerprint"),
-			getString(proxy, "client-fingerprint"),
-			getString(proxy, "client_fingerprint"),
-			getString(proxy, "fp"),
-		))
+		// Hysteria runs over QUIC; sing-box rejects tls.utls there
+		// ("unsupported usage for uTLS"), so client fingerprints are dropped.
 		applyTLSCertificateFromClash(tls, proxy)
 		outbound := map[string]any{
 			"type":        "hysteria",
@@ -2781,30 +2773,60 @@ func parseVmessFromMap(v map[string]any, fallbackTag string) (ParsedNode, bool) 
 	}
 
 	network := vmessNetworkFromMap(v)
-	if !setV2RayTransportFromURI(outbound, network,
-		strings.TrimSpace(firstNonEmpty(
-			getString(v, "path"),
-			getString(v, "wspath"),
-			getString(v, "ws-path"),
-			getString(v, "ws_path"),
-		)),
-		strings.TrimSpace(firstNonEmpty(
-			getString(v, "ws.host"),
-			getString(v, "wsHost"),
-			getString(v, "host"),
-		)),
-		strings.TrimSpace(firstNonEmpty(
-			getString(v, "serviceName"),
-			getString(v, "service_name"),
-			getString(v, "service-name"),
-			getString(v, "grpc-service-name"),
-			getString(v, "grpc_service_name"),
-		)),
-	) {
+	rawPath := strings.TrimSpace(firstNonEmpty(
+		getString(v, "path"),
+		getString(v, "wspath"),
+		getString(v, "ws-path"),
+		getString(v, "ws_path"),
+	))
+	rawHost := strings.TrimSpace(firstNonEmpty(
+		getString(v, "ws.host"),
+		getString(v, "wsHost"),
+		getString(v, "host"),
+	))
+	rawServiceName := strings.TrimSpace(firstNonEmpty(
+		getString(v, "serviceName"),
+		getString(v, "service_name"),
+		getString(v, "service-name"),
+		getString(v, "grpc-service-name"),
+		getString(v, "grpc_service_name"),
+	))
+	if !setV2RayTransportFromURI(outbound, network, rawPath, rawHost, rawServiceName) {
 		return ParsedNode{}, false
 	}
+	setVmessTCPHeaderObfuscation(outbound, network, getString(v, "type"), rawPath, rawHost)
 
 	return buildParsedNode(outbound)
+}
+
+// setVmessTCPHeaderObfuscation maps the vmess JSON header obfuscation mode
+// (`net` empty/tcp plus `type: "http"`, per the v2rayN-style schema; Xray
+// renames the tcp transport to `raw`) onto a sing-box HTTP transport, which
+// implements TCP + HTTP header obfuscation. Without this the transport was
+// silently dropped, so such nodes could never connect and were permanently
+// circuit-broken (issue #99).
+func setVmessTCPHeaderObfuscation(outbound map[string]any, network string, headerType string, rawPath string, rawHost string) {
+	if _, exists := outbound["transport"]; exists {
+		return
+	}
+	switch normalizeV2RayNetwork(strings.ToLower(strings.TrimSpace(network))) {
+	case "", "tcp":
+	default:
+		return
+	}
+	if strings.ToLower(strings.TrimSpace(headerType)) != "http" {
+		return
+	}
+	transport := map[string]any{"type": "http"}
+	// sing-box defaults an empty path to "/", matching the Xray header
+	// obfuscation default, so omit it for stability of stored configs.
+	if path := strings.TrimSpace(rawPath); path != "" && path != "/" {
+		transport["path"] = path
+	}
+	if hosts := splitCommaList(rawHost); len(hosts) > 0 {
+		transport["host"] = hosts
+	}
+	outbound["transport"] = transport
 }
 
 func vmessNetworkFromMap(v map[string]any) string {
@@ -2985,6 +3007,11 @@ func parseVmessStdURI(uri string) (ParsedNode, bool) {
 	}
 	if host := strings.TrimSpace(firstNonEmpty(query.Get("host"), query.Get("ws.host"))); host != "" {
 		nodeMap["host"] = host
+	}
+	// In the v2rayN-style std URI schema `type` is the tcp header obfuscation
+	// mode ("none"/"http"), not the transport; transport comes from netPart.
+	if headerType := strings.ToLower(strings.TrimSpace(query.Get("type"))); headerType != "" {
+		nodeMap["type"] = headerType
 	}
 	if sni := strings.TrimSpace(firstNonEmpty(query.Get("sni"), query.Get("peer"), query.Get("servername"))); sni != "" {
 		nodeMap["sni"] = sni
@@ -3360,12 +3387,8 @@ func parseHysteria2URI(uri string) (ParsedNode, bool) {
 	if alpn := splitALPN(query.Get("alpn")); len(alpn) > 0 {
 		tls["alpn"] = alpn
 	}
-	applyUTLSFromValue(tls, firstNonEmpty(
-		query.Get("fp"),
-		query.Get("fingerprint"),
-		query.Get("client-fingerprint"),
-		query.Get("client_fingerprint"),
-	))
+	// Hysteria2 runs over QUIC; sing-box rejects tls.utls there
+	// ("unsupported usage for uTLS"), so fp/fingerprint is ignored here.
 	if pins := splitCommaList(firstNonEmpty(
 		query.Get("pinSHA256"),
 		query.Get("pin-sha256"),

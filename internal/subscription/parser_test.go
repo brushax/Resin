@@ -851,9 +851,8 @@ func TestParseGeneralSubscription_ClashJSON_HysteriaAdvancedFields(t *testing.T)
 	if !containsAnyString(certificates, "-----BEGIN CERTIFICATE-----ABC") {
 		t.Fatalf("tls.certificate: got %v", certificates)
 	}
-	utls := mustMapField(t, tls, "utls")
-	if got := utls["fingerprint"]; got != "chrome" {
-		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	if _, ok := tls["utls"]; ok {
+		t.Fatalf("tls.utls: want absent for QUIC hysteria outbound, got %v", tls["utls"])
 	}
 }
 
@@ -1035,9 +1034,8 @@ func TestParseGeneralSubscription_ClashJSON_Hysteria2AdvancedFields(t *testing.T
 	if !containsAnyString(certificates, "-----BEGIN CERTIFICATE-----XYZ") {
 		t.Fatalf("tls.certificate: got %v", certificates)
 	}
-	utls := mustMapField(t, tls, "utls")
-	if got := utls["fingerprint"]; got != "firefox" {
-		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	if _, ok := tls["utls"]; ok {
+		t.Fatalf("tls.utls: want absent for QUIC hysteria2 outbound, got %v", tls["utls"])
 	}
 }
 
@@ -1622,6 +1620,75 @@ func TestParseGeneralSubscription_VMessURIExtendedTransports(t *testing.T) {
 	}
 }
 
+func TestParseGeneralSubscription_VMessTCPHTTPHeaderObfuscation(t *testing.T) {
+	// Regression for issue #99: vmess share links with net=tcp + type=http
+	// (TCP + HTTP header obfuscation, shown as RAW in 3x-ui panels) must map
+	// onto a sing-box HTTP transport instead of dropping the transport.
+	obfsJSON := `{"v":"2","ps":"RAW-header","add":"example.com","port":"60443","id":"11111111-2222-3333-3333-555555555555","aid":"0","scy":"auto","net":"tcp","type":"http","host":"www.microsoft.com,msft.com","path":"/d/","tls":"none"}`
+	plainJSON := `{"v":"2","ps":"RAW-plain","add":"example.com","port":"60443","id":"22222222-3333-4444-4444-666666666666","aid":"0","scy":"auto","net":"tcp","type":"none","path":"/","tls":"none"}`
+	data := []byte(
+		"vmess://" + base64.StdEncoding.EncodeToString([]byte(obfsJSON)) + "\n" +
+			"vmess://" + base64.StdEncoding.EncodeToString([]byte(plainJSON)),
+	)
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 2 {
+		t.Fatalf("expected 2 parsed nodes, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	transport := mustMapField(t, obj, "transport")
+	if got := transport["type"]; got != "http" {
+		t.Fatalf("transport.type: got %v, want http", got)
+	}
+	hosts, ok := transport["host"].([]any)
+	if !ok || len(hosts) != 2 || hosts[0] != "www.microsoft.com" || hosts[1] != "msft.com" {
+		t.Fatalf("transport.host: got %v, want [www.microsoft.com msft.com]", transport["host"])
+	}
+	if got := transport["path"]; got != "/d/" {
+		t.Fatalf("transport.path: got %v, want /d/", got)
+	}
+
+	obj = parseNodeRaw(t, nodes[1].RawOptions)
+	if _, ok := obj["transport"]; ok {
+		t.Fatalf("transport: want absent for type=none, got %v", obj["transport"])
+	}
+}
+
+func TestParseGeneralSubscription_Hysteria2URIFingerprintDroppedForQUIC(t *testing.T) {
+	// Regression for issue #98: fp on hysteria2 links must not be written to
+	// tls.utls; sing-box rejects uTLS on QUIC outbounds with
+	// "unsupported usage for uTLS", permanently circuit-breaking the node.
+	data := []byte("hysteria2://hy2pass@example.com:443?alpn=h3&fp=chrome&obfs=salamander&obfs-password=hxpw&security=tls&sni=example.com#hy2-test")
+
+	nodes, err := ParseGeneralSubscription(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nodes) != 1 {
+		t.Fatalf("expected 1 parsed node, got %d", len(nodes))
+	}
+
+	obj := parseNodeRaw(t, nodes[0].RawOptions)
+	if got := obj["type"]; got != "hysteria2" {
+		t.Fatalf("type: got %v", got)
+	}
+	tls := mustMapField(t, obj, "tls")
+	if got := tls["server_name"]; got != "example.com" {
+		t.Fatalf("tls.server_name: got %v", got)
+	}
+	if _, ok := tls["utls"]; ok {
+		t.Fatalf("tls.utls: want absent for QUIC outbound, got %v", tls["utls"])
+	}
+	obfs := mustMapField(t, obj, "obfs")
+	if got := obfs["type"]; got != "salamander" {
+		t.Fatalf("obfs.type: got %v", got)
+	}
+}
+
 func TestParseGeneralSubscription_TrojanURITLSAdvancedFields(t *testing.T) {
 	data := []byte(
 		"trojan://password@example.com:443?type=tcp&sni=example.com&allowInsecure=1&alpn=h2%2Chttp%2F1.1&fp=edge",
@@ -1739,9 +1806,8 @@ func TestParseGeneralSubscription_HY2URIAliasAndQueryPassword(t *testing.T) {
 	if got := tls["certificate_path"]; got != "/etc/ssl/certs/hy2.pem" {
 		t.Fatalf("tls.certificate_path: got %v", got)
 	}
-	utls := mustMapField(t, tls, "utls")
-	if got := utls["fingerprint"]; got != "chrome" {
-		t.Fatalf("tls.utls.fingerprint: got %v", got)
+	if _, ok := tls["utls"]; ok {
+		t.Fatalf("tls.utls: want absent for QUIC hysteria2 outbound, got %v", tls["utls"])
 	}
 }
 
