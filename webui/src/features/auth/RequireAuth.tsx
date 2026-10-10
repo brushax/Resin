@@ -1,5 +1,6 @@
 import { useEffect, useState, type ReactElement } from "react";
-import { Navigate, useLocation } from "react-router-dom";
+import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { setUnauthorizedHandler } from "../../lib/api-client";
 import { useAuthStore } from "./auth-store";
 
 type RequireAuthProps = {
@@ -9,8 +10,18 @@ type RequireAuthProps = {
 export function RequireAuth({ children }: RequireAuthProps) {
   const token = useAuthStore((state) => state.token);
   const location = useLocation();
+  const navigate = useNavigate();
   const [checked, setChecked] = useState(Boolean(token));
   const [anonymousAllowed, setAnonymousAllowed] = useState(false);
+
+  useEffect(() => {
+    const next = `${location.pathname}${location.search}`;
+    setUnauthorizedHandler(() => {
+      useAuthStore.getState().clearToken();
+      navigate(`/login?next=${encodeURIComponent(next)}`, { replace: true });
+    });
+    return () => setUnauthorizedHandler(null);
+  }, [location.pathname, location.search, navigate]);
 
   useEffect(() => {
     if (token) {
