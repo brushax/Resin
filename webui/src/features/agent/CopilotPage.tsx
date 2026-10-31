@@ -1,330 +1,569 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Activity,
+  AlertTriangle,
   Bot,
-  CheckCircle2,
-  ChevronDown,
   ChevronRight,
   Clock,
+  ListChecks,
   Play,
-  RotateCcw,
+  RefreshCw,
   Sparkles,
   Wrench,
+  X,
 } from "lucide-react";
-import { triggerDiagnose, listAgentRuns, getAgentRun } from "./api";
-import type { AgentInvestigationReport } from "./types";
+import { getAgentRun, listAgentRuns, triggerDiagnose } from "./api";
+import type { AgentRunSummary, AgentStepRecord } from "./types";
 import { Button } from "../../components/ui/Button";
+import { Badge, type BadgeVariant } from "../../components/ui/Badge";
+import { Card } from "../../components/ui/Card";
+import { Switch } from "../../components/ui/Switch";
+import { Textarea } from "../../components/ui/Textarea";
+import { OffsetPagination } from "../../components/ui/OffsetPagination";
+import { useI18n } from "../../i18n";
+import { formatApiErrorMessage } from "../../lib/error-message";
+import { formatDateTime, formatRelativeTime } from "../../lib/time";
 
-const presetGoals = [
-  "排查最近 1 小时网络超时与慢连接集中在哪些站点",
-  "诊断 Docker 镜像拉取与 CDN 连接质量，必要时执行自愈",
-  "检查 Gemini 平台账号出口连通性与会话黏性状态",
-  "扫描全网是否有被 Cloudflare 拦截或持续 504 的坏节点并处理",
-];
+const PAGE_SIZE_OPTIONS = [10, 20, 50] as const;
+
+// Each preset keeps a short chip label separate from the full instruction sent
+// to the agent, so the chips stay readable on a phone.
+const PRESET_GOALS = [
+  { label: "最近 1 小时超时", goal: "排查最近 1 小时网络超时与慢连接集中在哪些站点" },
+  { label: "Docker 拉取质量", goal: "诊断 Docker 镜像拉取与 CDN 连接质量，必要时执行自愈" },
+  { label: "Gemini 出口与黏性", goal: "检查 Gemini 平台账号出口连通性与会话黏性状态" },
+  { label: "Cloudflare 拦截与 504", goal: "扫描全网是否有被 Cloudflare 拦截或持续 504 的坏节点并处理" },
+] as const;
+
+type RunView = {
+  id?: string;
+  goal: string;
+  status: string;
+  totalSteps: number;
+  summary: string;
+  actions: string[];
+  trace: AgentStepRecord[];
+  createdAt?: string;
+  durationMs?: number;
+  model?: string;
+};
+
+function parseTrace(raw: string | undefined): AgentStepRecord[] {
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as AgentStepRecord[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function statusVariant(status: string): BadgeVariant {
+  switch (status) {
+    case "remediated":
+      return "success";
+    case "diagnosed":
+      return "info";
+    case "failed":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
 
 export function CopilotPage() {
+  const { t } = useI18n();
   const queryClient = useQueryClient();
   const [goal, setGoal] = useState("");
   const [allowMutation, setAllowMutation] = useState(true);
-  const [activeReport, setActiveReport] = useState<AgentInvestigationReport | null>(null);
+  const [result, setResult] = useState<RunView | null>(null);
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const [freshTrace, setFreshTrace] = useState<RunView | null>(null);
+  const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState<number>(PAGE_SIZE_OPTIONS[0]);
   const [expandedSteps, setExpandedSteps] = useState<Record<number, boolean>>({});
 
   const runsQuery = useQuery({
-    queryKey: ["agent-runs"],
-    queryFn: () => listAgentRuns(20, 0),
+    queryKey: ["agent-runs", page, pageSize],
+    queryFn: () => listAgentRuns(pageSize, page * pageSize),
     refetchInterval: 30_000,
+    placeholderData: (previous) => previous,
+  });
+
+  const runDetailQuery = useQuery({
+    queryKey: ["agent-run", selectedRunId],
+    queryFn: () => getAgentRun(selectedRunId as string),
+    enabled: Boolean(selectedRunId),
+    staleTime: 60_000,
   });
 
   const diagnoseMutation = useMutation({
     mutationFn: triggerDiagnose,
     onSuccess: (data) => {
-      setActiveReport(data);
-      queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
+      setResult({
+        goal: data.goal,
+        status: data.actions_taken && data.actions_taken.length > 0 ? "remediated" : "diagnosed",
+        totalSteps: data.total_steps,
+        summary: data.summary,
+        actions: data.actions_taken ?? [],
+        trace: Array.isArray(data.trace) ? data.trace : [],
+      });
+      void queryClient.invalidateQueries({ queryKey: ["agent-runs"] });
     },
   });
 
-  const handleRun = (selectedGoal?: string) => {
-    const targetGoal = selectedGoal || goal;
-    if (!targetGoal.trim()) return;
-    diagnoseMutation.mutate({
-      goal: targetGoal.trim(),
-      allow_mutation: allowMutation,
-    });
+  const detailView = useMemo<RunView | null>(() => {
+    const detail = runDetailQuery.data;
+    if (!detail) {
+      return null;
+    }
+    return {
+      id: detail.id,
+      goal: detail.goal,
+      status: detail.status,
+      totalSteps: detail.total_steps,
+      summary: detail.summary,
+      actions: detail.remediations_list ?? [],
+      trace: parseTrace(detail.trace_json),
+      createdAt: detail.created_at,
+      durationMs: detail.duration_ms,
+      model: detail.model,
+    };
+  }, [runDetailQuery.data]);
+
+  const runs = runsQuery.data?.items ?? [];
+  const totalRuns = runsQuery.data?.total ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalRuns / pageSize));
+  const drawerView = freshTrace ?? detailView;
+  const drawerOpen = Boolean(freshTrace || selectedRunId);
+
+  const statusLabel = (status: string): string => {
+    switch (status) {
+      case "remediated":
+        return t("已自愈");
+      case "diagnosed":
+        return t("已诊断");
+      case "no_action_needed":
+        return t("无需处理");
+      case "failed":
+        return t("失败");
+      default:
+        return status || t("未知");
+    }
+  };
+
+  const runDiagnose = (targetGoal?: string) => {
+    const nextGoal = (targetGoal ?? goal).trim();
+    if (!nextGoal || diagnoseMutation.isPending) {
+      return;
+    }
+    if (targetGoal) {
+      setGoal(targetGoal);
+    }
+    setExpandedSteps({});
+    diagnoseMutation.mutate({ goal: nextGoal, allow_mutation: allowMutation });
+  };
+
+  const openRun = (id: string) => {
+    setExpandedSteps({});
+    setFreshTrace(null);
+    setSelectedRunId(id);
+  };
+
+  const openResultTrace = (view: RunView) => {
+    setExpandedSteps({});
+    if (view.id) {
+      setSelectedRunId(view.id);
+      return;
+    }
+    setSelectedRunId(null);
+    setFreshTrace(view);
+  };
+
+  const closeDrawer = () => {
+    setSelectedRunId(null);
+    setFreshTrace(null);
+    setExpandedSteps({});
   };
 
   const toggleStep = (step: number) => {
-    setExpandedSteps((prev) => ({ ...prev, [step]: !prev[step] }));
+    setExpandedSteps((previous) => ({ ...previous, [step]: !previous[step] }));
+  };
+
+  const renderTrace = (view: RunView) => {
+    if (!view.trace.length) {
+      return <p className="muted">{t("本次诊断没有记录执行轨迹。")}</p>;
+    }
+    return (
+      <div className="copilot-trace">
+        {view.trace.map((step) => {
+          const expanded = Boolean(expandedSteps[step.step]);
+          return (
+            <div className="copilot-step" key={step.step}>
+              <button
+                type="button"
+                className="copilot-step-head"
+                onClick={() => toggleStep(step.step)}
+                aria-expanded={expanded}
+              >
+                <span className="copilot-step-index">{t("第 {{step}} 步", { step: step.step })}</span>
+                <span className="copilot-step-tool">{step.tool_name || t("最终结论")}</span>
+                <ChevronRight
+                  size={16}
+                  className={expanded ? "copilot-step-chevron open" : "copilot-step-chevron"}
+                />
+              </button>
+              {expanded ? (
+                <div className="copilot-step-body">
+                  {step.thought ? (
+                    <section>
+                      <h4>{t("思考")}</h4>
+                      <p>{step.thought}</p>
+                    </section>
+                  ) : null}
+                  {step.arguments ? (
+                    <section>
+                      <h4>{t("参数")}</h4>
+                      <pre className="copilot-code">{step.arguments}</pre>
+                    </section>
+                  ) : null}
+                  {step.result ? (
+                    <section>
+                      <h4>{t("观察结果")}</h4>
+                      <pre className="copilot-code">{step.result}</pre>
+                    </section>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    );
   };
 
   return (
-    <div className="space-y-6">
-      {/* 顶部 Header */}
-      <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+    <section className="copilot-page">
+      <header className="module-header">
         <div>
-          <h1 className="text-2xl font-bold tracking-tight flex items-center gap-2">
-            <Bot className="h-7 w-7 text-indigo-500" />
-            AI 智能体诊断与自愈中心 (Copilot)
-          </h1>
-          <p className="text-sm text-neutral-400">
-            基于原生 MCP 协议驱动的自主运维智能体，具备自主查询日志、现场探测验证与闭环热修复能力。
+          <h2>{t("AI 诊断自愈")}</h2>
+          <p className="module-description">
+            {t("自主运维智能体：检索请求日志、现场探测节点、定位根因，并在授权后执行闭环热修复。")}
           </p>
         </div>
-      </div>
+        <div className="copilot-header-actions">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void runsQuery.refetch()}
+            disabled={runsQuery.isFetching}
+          >
+            <RefreshCw size={16} className={runsQuery.isFetching ? "spin" : undefined} />
+            {t("刷新")}
+          </Button>
+        </div>
+      </header>
 
-      {/* 触发控制台 */}
-      <div className="rounded-xl border border-neutral-800 bg-neutral-900/60 p-5 shadow-sm space-y-4">
-        <div className="flex flex-col gap-3">
-          <label className="text-sm font-medium text-neutral-200 flex items-center gap-2">
-            <Sparkles className="h-4 w-4 text-amber-400" />
-            输入调查目标或异常现象
-          </label>
-          <div className="flex flex-col md:flex-row gap-3">
-            <input
-              type="text"
-              value={goal}
-              onChange={(e) => setGoal(e.target.value)}
-              placeholder="例如：排查最近 1 小时拉取镜像卡顿的原因，若有坏节点则自动热修复"
-              className="flex-1 rounded-lg border border-neutral-700 bg-neutral-950 px-3.5 py-2.5 text-sm text-neutral-100 placeholder:text-neutral-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500"
-            />
-            <Button
-              onClick={() => handleRun()}
-              disabled={diagnoseMutation.isPending || !goal.trim()}
-              className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium px-5"
-            >
-              {diagnoseMutation.isPending ? (
-                <>
-                  <Activity className="h-4 w-4 animate-spin" />
-                  智能体自主排查中...
-                </>
-              ) : (
-                <>
-                  <Play className="h-4 w-4" />
-                  发起排查
-                </>
-              )}
-            </Button>
+      <Card className="copilot-console">
+        <div className="copilot-console-head">
+          <div>
+            <h3>
+              <Sparkles size={16} />
+              {t("发起诊断")}
+            </h3>
+            <p className="muted">
+              {t("描述你观察到的现象或想排查的问题，智能体会按 ReAct 流程自主取证。")}
+            </p>
           </div>
         </div>
 
-        {/* 快捷 Presets */}
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          <span className="text-xs text-neutral-500">快速诊断预设：</span>
-          {presetGoals.map((p, idx) => (
+        <label className="field-label" htmlFor="copilot-goal">
+          {t("诊断目标")}
+        </label>
+        <Textarea
+          id="copilot-goal"
+          rows={3}
+          value={goal}
+          maxLength={500}
+          onChange={(event) => setGoal(event.target.value)}
+          placeholder={t("例如：排查最近 1 小时拉取镜像卡顿的原因，若发现坏节点则自动隔离")}
+          disabled={diagnoseMutation.isPending}
+        />
+
+        <div className="copilot-presets">
+          <span className="copilot-presets-label">{t("快速预设")}</span>
+          {PRESET_GOALS.map((preset) => (
             <button
-              key={idx}
+              key={preset.label}
               type="button"
-              onClick={() => {
-                setGoal(p);
-                handleRun(p);
-              }}
-              className="rounded-full border border-neutral-800 bg-neutral-950/80 px-3 py-1 text-xs text-neutral-300 hover:border-indigo-500/50 hover:bg-neutral-800 transition"
+              className="copilot-chip"
+              title={t(preset.goal)}
+              disabled={diagnoseMutation.isPending}
+              onClick={() => runDiagnose(t(preset.goal))}
             >
-              {p}
+              {t(preset.label)}
             </button>
           ))}
         </div>
 
-        {/* 权限开关 */}
-        <div className="flex items-center justify-between border-t border-neutral-800/80 pt-3 text-xs">
-          <label className="flex items-center gap-2 cursor-pointer select-none text-neutral-300">
-            <input
-              type="checkbox"
+        <div className="copilot-console-foot">
+          <label className="copilot-toggle">
+            <Switch
               checked={allowMutation}
-              onChange={(e) => setAllowMutation(e.target.checked)}
-              className="rounded border-neutral-700 bg-neutral-900 text-indigo-600 focus:ring-indigo-500"
+              onChange={(event) => setAllowMutation(event.target.checked)}
+              disabled={diagnoseMutation.isPending}
             />
-            <span>允许闭环热修复 (开启后若发现坏节点或规则错配，智能体可自主执行隔离、规则追加与驱逐，并自动复测验证)</span>
+            <span>
+              <strong>{t("允许闭环热修复")}</strong>
+              <small>
+                {t("开启后可隔离坏节点、追加平台排除规则，并在修复后自动复测；关闭则只诊断不写配置。")}
+              </small>
+            </span>
           </label>
-        </div>
-      </div>
 
-      {/* 当前报告展示 */}
-      {activeReport && (
-        <div className="rounded-xl border border-indigo-500/30 bg-neutral-900/80 p-5 space-y-4 shadow-lg">
-          <div className="flex items-center justify-between border-b border-neutral-800 pb-3">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
-              <h2 className="text-base font-semibold text-neutral-100">
-                诊断完成 · 共执行 {activeReport.total_steps} 轮自主探索
-              </h2>
-            </div>
-            {activeReport.actions_taken && activeReport.actions_taken.length > 0 && (
-              <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400 border border-emerald-500/20">
-                <Wrench className="h-3.5 w-3.5" />
-                已执行 {activeReport.actions_taken.length} 项热修复
-              </span>
-            )}
-          </div>
-
-          {/* 总结卡片 */}
-          <div className="rounded-lg bg-neutral-950 p-4 border border-neutral-800 text-sm leading-relaxed text-neutral-200 whitespace-pre-wrap font-sans">
-            {activeReport.summary}
-          </div>
-
-          {/* 执行热修复列表 */}
-          {activeReport.actions_taken && activeReport.actions_taken.length > 0 && (
-            <div className="space-y-1.5">
-              <div className="text-xs font-semibold text-emerald-400 uppercase tracking-wider flex items-center gap-1">
-                <Wrench className="h-3 w-3" />
-                生效的热修复动作
-              </div>
-              <ul className="space-y-1">
-                {activeReport.actions_taken.map((act, i) => (
-                  <li key={i} className="text-xs font-mono bg-emerald-950/30 border border-emerald-800/40 text-emerald-300 rounded px-2.5 py-1">
-                    {act}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* 步骤时间线 */}
-          <div className="space-y-2 pt-2 border-t border-neutral-800/60">
-            <div className="text-xs font-medium text-neutral-400 flex items-center gap-1">
-              <Activity className="h-3.5 w-3.5 text-indigo-400" />
-              智能体多轮 ReAct 执行 Trace
-            </div>
-            <div className="space-y-2">
-              {activeReport.trace.map((tr) => (
-                <div key={tr.step} className="rounded-lg border border-neutral-800/80 bg-neutral-950 text-xs">
-                  <button
-                    type="button"
-                    onClick={() => toggleStep(tr.step)}
-                    className="w-full flex items-center justify-between p-2.5 text-left text-neutral-300 hover:bg-neutral-900/50"
-                  >
-                    <div className="flex items-center gap-2">
-                      <span className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-[10px] text-neutral-400">
-                        Step {tr.step}
-                      </span>
-                      <span className="font-mono text-indigo-300 font-medium">{tr.tool_name}</span>
-                    </div>
-                    {expandedSteps[tr.step] ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
-                  </button>
-                  {expandedSteps[tr.step] && (
-                    <div className="p-3 border-t border-neutral-800/60 space-y-2 bg-neutral-900/30">
-                      {tr.thought && (
-                        <div>
-                          <span className="text-[10px] uppercase text-neutral-500 font-semibold">Thought</span>
-                          <p className="text-neutral-300 mt-0.5">{tr.thought}</p>
-                        </div>
-                      )}
-                      <div>
-                        <span className="text-[10px] uppercase text-neutral-500 font-semibold">Arguments</span>
-                        <pre className="font-mono text-[11px] bg-neutral-950 p-2 rounded border border-neutral-800 text-neutral-400 overflow-x-auto mt-0.5">
-                          {tr.arguments}
-                        </pre>
-                      </div>
-                      <div>
-                        <span className="text-[10px] uppercase text-neutral-500 font-semibold">Observation</span>
-                        <pre className="font-mono text-[11px] bg-neutral-950 p-2 rounded border border-neutral-800 text-emerald-400/90 overflow-x-auto mt-0.5 max-h-40">
-                          {tr.result}
-                        </pre>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 历史审计台账 */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-base font-semibold text-neutral-200 flex items-center gap-2">
-            <Clock className="h-4 w-4 text-neutral-400" />
-            历史自愈审计台账 (Audit Trail)
-          </h2>
           <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => runsQuery.refetch()}
-            className="text-xs h-7"
+            onClick={() => runDiagnose()}
+            disabled={diagnoseMutation.isPending || !goal.trim()}
           >
-            <RotateCcw className="h-3 w-3 mr-1" />
-            刷新
+            {diagnoseMutation.isPending ? (
+              <>
+                <Activity size={16} className="spin" />
+                {t("智能体排查中...")}
+              </>
+            ) : (
+              <>
+                <Play size={16} />
+                {t("发起排查")}
+              </>
+            )}
           </Button>
         </div>
 
-        <div className="rounded-xl border border-neutral-800 bg-neutral-900/40 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="border-b border-neutral-800 bg-neutral-900/80 text-neutral-400 font-medium">
+        {diagnoseMutation.isPending ? (
+          <p className="copilot-pending-hint">
+            <Clock size={14} />
+            {t("多轮取证通常需要 1-3 分钟，请保持页面在前台。")}
+          </p>
+        ) : null}
+
+        {diagnoseMutation.isError ? (
+          <div className="callout callout-error">
+            <AlertTriangle size={14} />
+            <span>{formatApiErrorMessage(diagnoseMutation.error, t)}</span>
+          </div>
+        ) : null}
+      </Card>
+
+      {result ? (
+        <Card className="copilot-report">
+          <div className="copilot-section-title">
+            <Bot size={16} />
+            <span>{t("本次诊断结果")}</span>
+          </div>
+
+          <div className="copilot-report-head">
+            <div className="copilot-report-copy">
+              <p className="copilot-report-goal">{result.goal}</p>
+              <div className="copilot-report-meta">
+                <Badge variant={statusVariant(result.status)}>{statusLabel(result.status)}</Badge>
+                <span>{t("共 {{count}} 轮探索", { count: result.totalSteps })}</span>
+                {result.actions.length ? (
+                  <span className="copilot-meta-strong">
+                    {t("已执行 {{count}} 项热修复", { count: result.actions.length })}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+            <Button variant="secondary" size="sm" onClick={() => openResultTrace(result)}>
+              <ListChecks size={16} />
+              {t("查看 {{count}} 步轨迹", { count: result.trace.length })}
+            </Button>
+          </div>
+
+          <div className="copilot-summary">
+            <h4>{t("诊断结论")}</h4>
+            <p>{result.summary || t("智能体没有返回结论文本。")}</p>
+          </div>
+
+          {result.actions.length ? (
+            <div className="copilot-actions">
+              <h4>
+                <Wrench size={14} />
+                {t("生效的热修复动作")}
+              </h4>
+              <ul>
+                {result.actions.map((action, index) => (
+                  <li key={`${index}-${action}`}>{action}</li>
+                ))}
+              </ul>
+            </div>
+          ) : null}
+        </Card>
+      ) : null}
+
+      <Card className="copilot-history">
+        <div className="copilot-section-title">
+          <Clock size={16} />
+          <span>{t("历史诊断台账")}</span>
+          {totalRuns > 0 ? (
+            <span className="copilot-count">{t("共 {{count}} 条", { count: totalRuns })}</span>
+          ) : null}
+        </div>
+
+        {runsQuery.isLoading ? <p className="muted">{t("正在加载历史记录...")}</p> : null}
+
+        {runsQuery.isError ? (
+          <div className="callout callout-error">
+            <AlertTriangle size={14} />
+            <span>{formatApiErrorMessage(runsQuery.error, t)}</span>
+          </div>
+        ) : null}
+
+        {!runsQuery.isLoading && !runsQuery.isError && runs.length === 0 ? (
+          <div className="empty-box">
+            <Sparkles size={16} />
+            <p>{t("暂无历史诊断记录，在上方发起一次排查即可自动归档。")}</p>
+          </div>
+        ) : null}
+
+        {runs.length ? (
+          <div className="copilot-table-wrap">
+            <table className="copilot-table">
+              <thead>
                 <tr>
-                  <th className="py-2.5 px-3">时间</th>
-                  <th className="py-2.5 px-3">调查目标</th>
-                  <th className="py-2.5 px-3">状态</th>
-                  <th className="py-2.5 px-3">步数</th>
-                  <th className="py-2.5 px-3">热修复</th>
-                  <th className="py-2.5 px-3">耗时</th>
-                  <th className="py-2.5 px-3">操作</th>
+                  <th scope="col">{t("时间")}</th>
+                  <th scope="col">{t("调查目标")}</th>
+                  <th scope="col">{t("状态")}</th>
+                  <th scope="col">{t("步数")}</th>
+                  <th scope="col">{t("热修复")}</th>
+                  <th scope="col">{t("运行时长")}</th>
+                  <th scope="col">
+                    <span className="copilot-sr-only">{t("操作")}</span>
+                  </th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-neutral-800/60 text-neutral-300">
-                {runsQuery.data?.items && runsQuery.data.items.length > 0 ? (
-                  runsQuery.data.items.map((r) => (
-                    <tr key={r.id} className="hover:bg-neutral-800/30">
-                      <td className="py-2.5 px-3 font-mono text-neutral-400 whitespace-nowrap">
-                        {new Date(r.created_at).toLocaleString()}
-                      </td>
-                      <td className="py-2.5 px-3 max-w-xs truncate font-medium text-neutral-200">
-                        {r.goal}
-                      </td>
-                      <td className="py-2.5 px-3">
-                        {r.status === "remediated" ? (
-                          <span className="inline-flex items-center rounded-full bg-emerald-500/10 px-2 py-0.5 text-[10px] font-medium text-emerald-400 border border-emerald-500/20">
-                            已自愈
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center rounded-full bg-neutral-800 px-2 py-0.5 text-[10px] font-medium text-neutral-400">
-                            已诊断
-                          </span>
-                        )}
-                      </td>
-                      <td className="py-2.5 px-3">{r.total_steps} 步</td>
-                      <td className="py-2.5 px-3 font-medium text-emerald-400">{r.remediations_count} 项</td>
-                      <td className="py-2.5 px-3 font-mono text-neutral-400">{(r.duration_ms / 1000).toFixed(1)}s</td>
-                      <td className="py-2.5 px-3">
-                        <button
-                          type="button"
-                          onClick={() => {
-                            // 将选中的记录设为 activeReport
-                            getAgentRun(r.id).then((d) => {
-                              try {
-                                const tr = JSON.parse(d.trace_json);
-                                setActiveReport({
-                                  goal: d.goal,
-                                  total_steps: d.total_steps,
-                                  trace: tr,
-                                  summary: d.summary,
-                                  actions_taken: d.remediations_list,
-                                });
-                              } catch {
-                                // fallback
-                              }
-                            });
-                          }}
-                          className="text-indigo-400 hover:text-indigo-300 font-medium"
-                        >
-                          查看 Trace
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                ) : (
-                  <tr>
-                    <td colSpan={7} className="py-8 text-center text-neutral-500">
-                      暂无历史自愈记录。在上方发起一次排查即可生成实时审计台账。
+              <tbody>
+                {runs.map((run: AgentRunSummary) => (
+                  <tr key={run.id} className="copilot-row">
+                    <td data-label={t("时间")}>
+                      <span className="copilot-time">{formatDateTime(run.created_at)}</span>
+                    </td>
+                    <td data-label={t("调查目标")} className="copilot-cell-goal">
+                      <span className="copilot-goal-cell">{run.goal}</span>
+                    </td>
+                    <td data-label={t("状态")}>
+                      <Badge variant={statusVariant(run.status)}>{statusLabel(run.status)}</Badge>
+                    </td>
+                    <td data-label={t("步数")} className="copilot-num">
+                      {run.total_steps}
+                    </td>
+                    <td data-label={t("热修复")} className="copilot-num">
+                      {run.remediations_count}
+                    </td>
+                    <td data-label={t("运行时长")} className="copilot-num">
+                      {(run.duration_ms / 1000).toFixed(1)}s
+                    </td>
+                    <td data-label={t("操作")} className="copilot-cell-action">
+                      <button type="button" className="copilot-link" onClick={() => openRun(run.id)}>
+                        {t("查看轨迹")}
+                      </button>
                     </td>
                   </tr>
-                )}
+                ))}
               </tbody>
             </table>
           </div>
+        ) : null}
+
+        {totalRuns > 0 ? (
+          <OffsetPagination
+            page={page}
+            totalPages={totalPages}
+            totalItems={totalRuns}
+            pageSize={pageSize}
+            pageSizeOptions={PAGE_SIZE_OPTIONS}
+            onPageChange={setPage}
+            onPageSizeChange={(next) => {
+              setPageSize(next);
+              setPage(0);
+            }}
+          />
+        ) : null}
+      </Card>
+
+      {drawerOpen ? (
+        <div
+          className="drawer-overlay"
+          role="dialog"
+          aria-modal="true"
+          aria-label={t("诊断记录详情")}
+          onClick={closeDrawer}
+        >
+          <Card className="drawer-panel copilot-drawer" onClick={(event) => event.stopPropagation()}>
+            <div className="drawer-header">
+              <div>
+                <h3>{t("执行轨迹")}</h3>
+                <p>{drawerView?.goal}</p>
+              </div>
+              <div className="drawer-header-actions">
+                <Button variant="ghost" size="sm" onClick={closeDrawer} aria-label={t("关闭")}>
+                  <X size={16} />
+                </Button>
+              </div>
+            </div>
+
+            {selectedRunId && runDetailQuery.isLoading ? (
+              <p className="muted">{t("正在加载轨迹...")}</p>
+            ) : null}
+
+            {selectedRunId && runDetailQuery.isError ? (
+              <div className="callout callout-error">
+                <AlertTriangle size={14} />
+                <span>{formatApiErrorMessage(runDetailQuery.error, t)}</span>
+              </div>
+            ) : null}
+
+            {drawerView ? (
+              <>
+                <div className="copilot-drawer-meta">
+                  <Badge variant={statusVariant(drawerView.status)}>{statusLabel(drawerView.status)}</Badge>
+                  <span>{t("共 {{count}} 轮探索", { count: drawerView.totalSteps })}</span>
+                  {drawerView.model ? <span>{drawerView.model}</span> : null}
+                  {drawerView.createdAt ? (
+                    <span>
+                      {formatDateTime(drawerView.createdAt)} · {formatRelativeTime(drawerView.createdAt)}
+                    </span>
+                  ) : null}
+                </div>
+
+                <div className="copilot-summary">
+                  <h4>{t("诊断结论")}</h4>
+                  <p>{drawerView.summary || t("智能体没有返回结论文本。")}</p>
+                </div>
+
+                {drawerView.actions.length ? (
+                  <div className="copilot-actions">
+                    <h4>
+                      <Wrench size={14} />
+                      {t("已执行 {{count}} 项热修复", { count: drawerView.actions.length })}
+                    </h4>
+                    <ul>
+                      {drawerView.actions.map((action, index) => (
+                        <li key={`${index}-${action}`}>{action}</li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+
+                {renderTrace(drawerView)}
+              </>
+            ) : null}
+          </Card>
         </div>
-      </div>
-    </div>
+      ) : null}
+    </section>
   );
 }

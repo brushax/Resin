@@ -1,8 +1,9 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, Gauge, Layers, Server, Shield, Waves } from "lucide-react";
+import { AlertTriangle, Gauge, Layers, RefreshCw, Server, Shield, Waves } from "lucide-react";
 import { useEffect, useId, useMemo, useState, type ComponentProps } from "react";
 import { Area, Bar, BarChart, CartesianGrid, ComposedChart, Curve, Line, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 import { Badge } from "../../components/ui/Badge";
+import { Button } from "../../components/ui/Button";
 import { Card } from "../../components/ui/Card";
 import { Select } from "../../components/ui/Select";
 import { useI18n } from "../../i18n";
@@ -900,10 +901,31 @@ export function DashboardPage() {
       </header>
 
       {globalError ? (
-        <div className="callout callout-error">
-          <AlertTriangle size={14} />
-          <span>{formatApiErrorMessage(globalError, t)}</span>
-        </div>
+        globalData ? (
+          // A single failed poll on a phone connection should not replace a
+          // working dashboard with a red banner; keep the last data visible and
+          // say that it is stale.
+          <div className="dashboard-stale-note" role="status">
+            <RefreshCw size={14} className="spin" />
+            <span>{t("连接中断，正在显示上次数据")}</span>
+          </div>
+        ) : (
+          <div className="callout callout-error">
+            <AlertTriangle size={14} />
+            <span>{formatApiErrorMessage(globalError, t)}</span>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={() => {
+                void globalRealtimeQuery.refetch();
+                void globalHistoryQuery.refetch();
+                void globalSnapshotQuery.refetch();
+              }}
+            >
+              {t("重试")}
+            </Button>
+          </div>
+        )
       ) : null}
 
       <div className="dashboard-kpi-grid">

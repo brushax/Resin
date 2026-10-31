@@ -11,10 +11,18 @@ export type TriggerDiagnoseInput = {
   max_steps?: number;
 };
 
+// A diagnosis is a multi-step ReAct loop over an LLM endpoint and routinely
+// takes minutes, so it needs a far longer deadline than a normal API call.
+const DIAGNOSE_TIMEOUT_MS = 300_000;
+
 export async function triggerDiagnose(input: TriggerDiagnoseInput): Promise<AgentInvestigationReport> {
   return apiRequest<AgentInvestigationReport>("/api/v1/agent/diagnose", {
     method: "POST",
-    body: JSON.stringify(input),
+    // apiRequest serializes the body itself; passing a pre-stringified value
+    // sent a JSON string literal and the server rejected every request with
+    // "cannot unmarshal string into Go value of type agent.InvestigationRequest".
+    body: input,
+    timeoutMs: DIAGNOSE_TIMEOUT_MS,
   });
 }
 

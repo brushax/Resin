@@ -747,6 +747,73 @@ Note: Once enabled, requests without authentication information are rejected ins
   "总请求": "Total requests",
   "最近错误：{{message}}": "Recent error: {{message}}",
   "配置已更新（{{count}} 项变更）": "Config updated ({{count}} changes)",
+
+  // AI Copilot (诊断自愈)
+  "AI 诊断自愈": "AI Diagnosis & Remediation",
+  "AI 自愈": "AI Copilot",
+  "自主运维智能体：检索请求日志、现场探测节点、定位根因，并在授权后执行闭环热修复。":
+    "Autonomous operations agent: searches request logs, probes nodes, finds root causes and applies closed-loop fixes when authorized.",
+  "发起诊断": "Start a Diagnosis",
+  "描述你观察到的现象或想排查的问题，智能体会按 ReAct 流程自主取证。":
+    "Describe what you observed or want to investigate. The agent gathers evidence in a ReAct loop.",
+  "诊断目标": "Diagnosis Goal",
+  "例如：排查最近 1 小时拉取镜像卡顿的原因，若发现坏节点则自动隔离":
+    "e.g. find out why image pulls stalled in the last hour and isolate bad nodes automatically",
+  "快速预设": "Presets",
+  "最近 1 小时超时": "Timeouts (last hour)",
+  "Docker 拉取质量": "Docker pull quality",
+  "Gemini 出口与黏性": "Gemini egress & stickiness",
+  "Cloudflare 拦截与 504": "Cloudflare blocks & 504",
+  "排查最近 1 小时网络超时与慢连接集中在哪些站点":
+    "Find which sites account for timeouts and slow connections in the last hour",
+  "诊断 Docker 镜像拉取与 CDN 连接质量，必要时执行自愈":
+    "Diagnose Docker image pulls and CDN connectivity, remediate if needed",
+  "检查 Gemini 平台账号出口连通性与会话黏性状态":
+    "Check egress connectivity and session stickiness for Gemini platform accounts",
+  "扫描全网是否有被 Cloudflare 拦截或持续 504 的坏节点并处理":
+    "Scan for nodes blocked by Cloudflare or returning persistent 504 and handle them",
+  "允许闭环热修复": "Allow closed-loop remediation",
+  "开启后可隔离坏节点、追加平台排除规则，并在修复后自动复测；关闭则只诊断不写配置。":
+    "When on, the agent may isolate bad nodes, add platform exclusions and re-test after fixing. When off it only diagnoses.",
+  "智能体排查中...": "Agent investigating...",
+  "发起排查": "Run Diagnosis",
+  "多轮取证通常需要 1-3 分钟，请保持页面在前台。":
+    "Multi-step investigation usually takes 1-3 minutes. Keep this page in the foreground.",
+  "本次诊断结果": "Latest Diagnosis",
+  "共 {{count}} 轮探索": "{{count}} investigation steps",
+  "已执行 {{count}} 项热修复": "{{count}} remediations applied",
+  "查看 {{count}} 步轨迹": "View {{count}}-step trace",
+  "诊断结论": "Diagnosis",
+  "智能体没有返回结论文本。": "The agent returned no summary.",
+  "生效的热修复动作": "Applied remediations",
+  "历史诊断台账": "Diagnosis History",
+  "正在加载历史记录...": "Loading history...",
+  "暂无历史诊断记录，在上方发起一次排查即可自动归档。":
+    "No diagnoses yet. Run one above and it will be archived here.",
+  "调查目标": "Goal",
+  "步数": "Steps",
+  "热修复": "Fixes",
+  "运行时长": "Duration",
+  "查看轨迹": "View trace",
+  "诊断记录详情": "Diagnosis record",
+  "执行轨迹": "Execution Trace",
+  "正在加载轨迹...": "Loading trace...",
+  "第 {{step}} 步": "Step {{step}}",
+  "最终结论": "Final answer",
+  "思考": "Thought",
+  "参数": "Arguments",
+  "观察结果": "Observation",
+  "本次诊断没有记录执行轨迹。": "No execution trace was recorded for this run.",
+  "已自愈": "Remediated",
+  "已诊断": "Diagnosed",
+  "无需处理": "No action needed",
+  "未知": "Unknown",
+  "无法连接 Resin 服务器，请检查网络后重试":
+    "Cannot reach the Resin server. Check your network and try again.",
+  "请求超时，服务器长时间未响应，请稍后重试":
+    "Request timed out. The server did not respond in time; try again shortly.",
+  "连接中断，正在显示上次数据": "Connection lost. Showing the last data received.",
+  "重试": "Retry",
 };
 
 export function translateDocumentTitle(locale: AppLocale): string {

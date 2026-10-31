@@ -2,6 +2,7 @@ package api
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/Resinat/Resin/internal/agent"
 )
@@ -17,6 +18,10 @@ func HandleAgentDiagnose(copilot *agent.Copilot) http.HandlerFunc {
 		var req agent.InvestigationRequest
 		if err := DecodeBody(r, &req); err != nil {
 			writeDecodeBodyError(w, err)
+			return
+		}
+		if strings.TrimSpace(req.Goal) == "" {
+			writeInvalidArgument(w, "goal is required")
 			return
 		}
 

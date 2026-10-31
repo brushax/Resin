@@ -127,8 +127,26 @@ func TestWebUI_IndexServed(t *testing.T) {
 	if ctype := rec.Header().Get("Content-Type"); !strings.Contains(ctype, "text/html") {
 		t.Fatalf("content-type: got %q, want contains text/html", ctype)
 	}
+	if cache := rec.Header().Get("Cache-Control"); cache != "no-cache, must-revalidate" {
+		t.Fatalf("cache-control: got %q, want index.html to be revalidated", cache)
+	}
 	if !strings.Contains(rec.Body.String(), "<div id=\"root\"></div>") {
 		t.Fatalf("unexpected index body: %q", rec.Body.String())
+	}
+}
+
+func TestWebUICacheHeaders(t *testing.T) {
+	cases := map[string]string{
+		"index.html":             "no-cache, must-revalidate",
+		"assets/index-abc123.js": "public, max-age=31536000, immutable",
+		"vite.svg":               "public, max-age=3600",
+	}
+	for assetPath, want := range cases {
+		rec := httptest.NewRecorder()
+		setWebUICacheHeaders(rec, assetPath)
+		if got := rec.Header().Get("Cache-Control"); got != want {
+			t.Errorf("%s: cache-control got %q, want %q", assetPath, got, want)
+		}
 	}
 }
 

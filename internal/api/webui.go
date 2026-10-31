@@ -39,6 +39,7 @@ func newWebUIHandler(distFS fs.FS) http.Handler {
 		}
 
 		if info, err := fs.Stat(distFS, assetPath); err == nil && !info.IsDir() {
+			setWebUICacheHeaders(w, assetPath)
 			http.ServeFileFS(w, r, distFS, assetPath)
 			return
 		}
@@ -49,8 +50,24 @@ func newWebUIHandler(distFS fs.FS) http.Handler {
 			return
 		}
 
+		setWebUICacheHeaders(w, "index.html")
 		http.ServeFileFS(w, r, distFS, "index.html")
 	})
+}
+
+// setWebUICacheHeaders keeps mobile browsers from reusing an index.html that
+// references asset files a deploy has already deleted, while still letting the
+// content-hashed bundles stay cached indefinitely.
+func setWebUICacheHeaders(w http.ResponseWriter, assetPath string) {
+	switch {
+	case assetPath == "index.html":
+		// Revalidate every time; the ETag/Last-Modified check still returns 304.
+		w.Header().Set("Cache-Control", "no-cache, must-revalidate")
+	case strings.HasPrefix(assetPath, "assets/"):
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	default:
+		w.Header().Set("Cache-Control", "public, max-age=3600")
+	}
 }
 
 func newRootRedirectHandler() http.Handler {
