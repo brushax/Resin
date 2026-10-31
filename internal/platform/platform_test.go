@@ -409,3 +409,35 @@ func TestValidateEgressIPVersion(t *testing.T) {
 		}
 	}
 }
+
+func TestPlatform_EvaluateNode_MaxLatencyFilter(t *testing.T) {
+	hFast := makeHash(`{"type":"ss","server":"fast"}`)
+	eFast := makeFullyRoutableEntry(hFast, "sub1")
+	eFast.LatencyTable.Update("example.com", 200*time.Millisecond, 10*time.Minute)
+
+	hSlow := makeHash(`{"type":"ss","server":"slow"}`)
+	eSlow := makeFullyRoutableEntry(hSlow, "sub1")
+	eSlow.LatencyTable.LoadEntry("example.com", node.DomainLatencyStats{
+		Ewma:        1500 * time.Millisecond,
+		LastUpdated: time.Now(),
+	})
+
+	poolRange := func(fn func(node.Hash, *node.NodeEntry) bool) {
+		fn(hFast, eFast)
+		fn(hSlow, eSlow)
+	}
+
+	p := NewPlatform("p1", "Test", nil, nil)
+	p.MaxLatencyMs = 800 // only fast node under 800ms should pass
+
+	p.FullRebuild(poolRange, alwaysLookup, usGeoLookup)
+	if p.View().Size() != 1 {
+		t.Fatalf("expected 1 routable node, got %d", p.View().Size())
+	}
+	if !p.View().Contains(hFast) {
+		t.Fatal("fast node should pass MaxLatency filter")
+	}
+	if p.View().Contains(hSlow) {
+		t.Fatal("slow node (>800ms) should be excluded by MaxLatency filter")
+	}
+}

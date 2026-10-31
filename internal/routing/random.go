@@ -155,30 +155,47 @@ func calculateScore(
 	// But we hold ref via pool, only deletion removes it.
 	// Assuming existence since we just picked it from view.
 
-	// Lease count from stats.
+	// Lease count and active in-flight connection load.
 	var leaseCount int64
+	var activeConns int64
+	var throughput uint64
 	if entry != nil {
 		ip := entry.GetEgressIP()
-		if ip.IsValid() {
+		if ip.IsValid() && stats != nil {
 			leaseCount = stats.Get(ip)
 		}
+		activeConns = entry.ActiveConns.Load()
+		throughput = entry.GetThroughputBytesPerSec()
 	}
+	totalLoad := leaseCount + activeConns
 
-	// If latency is 0 (empty/incompatible), score = LeaseCount strictly.
+	// If latency is 0 (empty/incompatible), score = totalLoad strictly.
 	if latency <= 0 {
-		return float64(leaseCount)
+		return float64(totalLoad)
 	}
 
 	// Policy-based scoring.
 	switch plat.AllocationPolicy {
+	case platform.AllocationPolicyPreferThroughput:
+		// Higher throughput is better -> lower score is better.
+		// Scale by activeConns+1 to distribute concurrent requests across fast nodes.
+		if throughput > 0 {
+			mbps := float64(throughput) / (1024 * 1024)
+			return (float64(activeConns+1) / (mbps + 0.1)) * 1e6
+		}
+		// Fallback to latency when throughput is unmeasured yet.
+		return float64(activeConns+1) * float64(latency)
 	case platform.AllocationPolicyPreferLowLatency:
-		return float64(latency)
+		// Penalize nodes with active connections slightly (10% per active connection)
+		// to prevent single-node hotspotting during concurrent bursts.
+		penalty := 1.0 + 0.1*float64(activeConns)
+		return float64(latency) * penalty
 	case platform.AllocationPolicyPreferIdleIP:
 		return float64(leaseCount)
 	case platform.AllocationPolicyBalanced:
 		fallthrough
 	default:
-		// (LeaseCount + 1) * Latency
-		return float64(leaseCount+1) * float64(latency)
+		// (totalLoad + 1) * Latency
+		return float64(totalLoad+1) * float64(latency)
 	}
 }

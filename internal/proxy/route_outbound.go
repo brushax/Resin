@@ -20,6 +20,7 @@ type healthyEnabledEvaluator interface {
 type routedOutbound struct {
 	Route    routing.RouteResult
 	Outbound adapter.Outbound
+	Entry    *node.NodeEntry
 }
 
 func resolveRoutedOutbound(
@@ -51,6 +52,7 @@ func resolveRoutedOutbound(
 	return routedOutbound{
 		Route:    result,
 		Outbound: *obPtr,
+		Entry:    entry,
 	}, nil
 }
 
@@ -75,6 +77,7 @@ func resolveNodeHashOverrideOutbound(pool outbound.PoolAccessor, nodeHash string
 			EgressIP: entry.GetEgressIP(),
 		},
 		Outbound: *obPtr,
+		Entry:    entry,
 	}, nil
 }
 

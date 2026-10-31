@@ -360,3 +360,33 @@ func AverageEWMAForDomainsMs(entry *NodeEntry, domains []string) (float64, bool)
 	}
 	return sumMs / float64(count), true
 }
+
+// OverallAverageEWMAMs returns the average EWMA latency across all recorded domains.
+func (t *LatencyTable) OverallAverageEWMAMs() (float64, bool) {
+	if t == nil {
+		return 0, false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	var sumMs float64
+	var count int
+	for i := range t.authorities {
+		if !t.authorities[i].occupied {
+			continue
+		}
+		sumMs += float64(t.authorities[i].stats.Ewma.Milliseconds())
+		count++
+	}
+	for i := range t.regular {
+		if !t.regular[i].occupied {
+			continue
+		}
+		sumMs += float64(t.regular[i].stats.Ewma.Milliseconds())
+		count++
+	}
+	if count == 0 {
+		return 0, false
+	}
+	return sumMs / float64(count), true
+}

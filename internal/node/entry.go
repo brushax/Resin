@@ -58,6 +58,11 @@ type NodeEntry struct {
 
 	// Outbound instance for this node.
 	Outbound atomic.Pointer[adapter.Outbound]
+
+	// Active in-flight connections (proxy hot path).
+	ActiveConns atomic.Int64
+	// EWMA throughput in bytes per second for large payload routing.
+	ThroughputBytesPerSec atomic.Uint64
 }
 
 // NewNodeEntry creates a NodeEntry with the given static fields.
@@ -316,4 +321,43 @@ func (e *NodeEntry) GetLastError() string {
 	e.mu.RLock()
 	defer e.mu.RUnlock()
 	return e.LastError
+}
+
+// IncActiveConns atomically increments active in-flight connection count.
+func (e *NodeEntry) IncActiveConns() int64 {
+	return e.ActiveConns.Add(1)
+}
+
+// DecActiveConns atomically decrements active in-flight connection count.
+func (e *NodeEntry) DecActiveConns() int64 {
+	v := e.ActiveConns.Add(-1)
+	if v < 0 {
+		e.ActiveConns.Store(0)
+		return 0
+	}
+	return v
+}
+
+// UpdateThroughput records a new throughput sample into EWMA (70% previous, 30% sample).
+func (e *NodeEntry) UpdateThroughput(bps uint64) {
+	if bps == 0 {
+		return
+	}
+	for {
+		old := e.ThroughputBytesPerSec.Load()
+		var newBps uint64
+		if old == 0 {
+			newBps = bps
+		} else {
+			newBps = uint64(float64(old)*0.7 + float64(bps)*0.3)
+		}
+		if e.ThroughputBytesPerSec.CompareAndSwap(old, newBps) {
+			break
+		}
+	}
+}
+
+// GetThroughputBytesPerSec returns the current estimated throughput EWMA.
+func (e *NodeEntry) GetThroughputBytesPerSec() uint64 {
+	return e.ThroughputBytesPerSec.Load()
 }

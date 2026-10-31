@@ -546,3 +546,56 @@ func TestRestoreLeasesExists(t *testing.T) {
 	// Just verify it doesn't panic on empty slice.
 	router.RestoreLeases(nil)
 }
+
+func TestP2C_FavorsIdleActiveConnections(t *testing.T) {
+	pool, subMgr := setupPool(t)
+	h1 := makeRoutableNode(t, pool, subMgr, `{"p2c":"active1"}`, "10.0.0.1", "cloudflare.com", 50*time.Millisecond)
+	h2 := makeRoutableNode(t, pool, subMgr, `{"p2c":"idle1"}`, "10.0.0.2", "cloudflare.com", 50*time.Millisecond)
+
+	e1, _ := pool.GetEntry(h1)
+	e1.ActiveConns.Store(10) // heavily loaded
+
+	router := makeRouter(pool, nil)
+
+	// In 100 requests, the idle node h2 should be picked the vast majority of times.
+	counts := map[node.Hash]int{}
+	for i := 0; i < 100; i++ {
+		res, err := router.RouteRequest(platName, "", "example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts[res.NodeHash]++
+	}
+	if counts[h2] < 70 {
+		t.Fatalf("expected idle node h2 to be favored, got %d/100", counts[h2])
+	}
+}
+
+func TestP2C_PreferThroughputPolicy(t *testing.T) {
+	pool, subMgr := setupPool(t)
+	hFast := makeRoutableNode(t, pool, subMgr, `{"thru":"fast"}`, "10.0.0.1", "cloudflare.com", 100*time.Millisecond)
+	hSlow := makeRoutableNode(t, pool, subMgr, `{"thru":"slow"}`, "10.0.0.2", "cloudflare.com", 50*time.Millisecond)
+
+	eFast, _ := pool.GetEntry(hFast)
+	eFast.UpdateThroughput(20 * 1024 * 1024) // 20 MB/s
+
+	eSlow, _ := pool.GetEntry(hSlow)
+	eSlow.UpdateThroughput(1 * 1024 * 1024) // 1 MB/s
+
+	plat, _ := pool.GetPlatformByName(platName)
+	plat.AllocationPolicy = platform.AllocationPolicyPreferThroughput
+
+	router := makeRouter(pool, nil)
+
+	counts := map[node.Hash]int{}
+	for i := 0; i < 100; i++ {
+		res, err := router.RouteRequest(platName, "", "example.com")
+		if err != nil {
+			t.Fatal(err)
+		}
+		counts[res.NodeHash]++
+	}
+	if counts[hFast] < 70 {
+		t.Fatalf("expected fast throughput node to be favored, got %d/100", counts[hFast])
+	}
+}

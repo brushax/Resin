@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/Resinat/Resin/internal/netutil"
+	"github.com/Resinat/Resin/internal/node"
 	"github.com/Resinat/Resin/internal/outbound"
 	"github.com/Resinat/Resin/internal/routing"
 	M "github.com/sagernet/sing/common/metadata"
@@ -26,6 +27,11 @@ type tunnelDeps struct {
 type preparedTunnel struct {
 	upstreamConn net.Conn
 	recordResult func(bool)
+	entry        *node.NodeEntry
+	domain       string
+	nodeHash     node.Hash
+	health       HealthRecorder
+	startTime    time.Time
 }
 
 type tunnelPrepareResult struct {
@@ -108,6 +114,10 @@ func prepareConnectTunnel(
 		}
 	}
 
+	if routed.Entry != nil {
+		routed.Entry.IncActiveConns()
+	}
+
 	recordResult := func(ok bool) {
 		if deps.health != nil {
 			recordPassiveResultAsync(deps.health, routed.Route, ok)
@@ -131,6 +141,11 @@ func prepareConnectTunnel(
 		session: &preparedTunnel{
 			upstreamConn: upstreamConn,
 			recordResult: recordResult,
+			entry:        routed.Entry,
+			domain:       domain,
+			nodeHash:     nodeHashRaw,
+			health:       deps.health,
+			startTime:    time.Now(),
 		},
 	}
 }
@@ -171,8 +186,13 @@ func pumpPreparedTunnel(
 ) tunnelRelayResult {
 	clientToUpstream, err := makeTunnelClientReader(clientConn, clientReader)
 	if err != nil {
-		if session != nil && session.upstreamConn != nil {
-			_ = session.upstreamConn.Close()
+		if session != nil {
+			if session.entry != nil {
+				session.entry.DecActiveConns()
+			}
+			if session.upstreamConn != nil {
+				_ = session.upstreamConn.Close()
+			}
 		}
 		if clientConn != nil {
 			_ = clientConn.Close()
@@ -233,6 +253,17 @@ func pumpPreparedTunnelReader(
 	egressResult := <-egressBytesCh
 	closeBoth()
 
+	if session.entry != nil {
+		session.entry.DecActiveConns()
+	}
+
+	duration := time.Since(session.startTime)
+	totalBytes := ingressResult.n + egressResult.n
+	if duration > 100*time.Millisecond && totalBytes > 32768 && session.entry != nil {
+		bps := uint64(float64(totalBytes) / duration.Seconds())
+		session.entry.UpdateThroughput(bps)
+	}
+
 	ingressErrBenign := isBenignTunnelCopyError(ingressResult.err)
 	egressErrBenign := isBenignTunnelCopyError(egressResult.err)
 	// A client-side TCP reset after the upstream response has already started is
@@ -270,6 +301,18 @@ func pumpPreparedTunnelReader(
 			result.upstreamStage = "connect_no_egress_traffic"
 		}
 	}
+
+	// 慢成功软惩罚：传输耗时严重超标且传输速率卡顿（<500KB/s stall），不予以重置失败计数，并向延迟表报告高延迟促使避让
+	if result.netOK && session.entry != nil && duration > 12*time.Second {
+		bps := float64(totalBytes) / duration.Seconds()
+		if bps < 500*1024 {
+			if session.health != nil && session.domain != "" {
+				penalty := duration
+				go session.health.RecordLatency(session.nodeHash, session.domain, &penalty)
+			}
+		}
+	}
+
 	return result
 }
 

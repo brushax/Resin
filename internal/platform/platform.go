@@ -42,6 +42,8 @@ type Platform struct {
 	PassiveCircuitBreakerDisabled    bool
 	// EgressIPVersion filters nodes by egress IP family: "" = any, "ipv4", "ipv6".
 	EgressIPVersion string
+	// MaxLatencyMs filters out nodes whose overall average latency exceeds this threshold (0 = disabled).
+	MaxLatencyMs int
 
 	// Routable view & its lock.
 	// viewMu serializes both FullRebuild and NotifyDirty.
@@ -165,6 +167,14 @@ func (p *Platform) evaluateNode(
 	// 5. Has at least one latency record.
 	if !entry.HasLatency() {
 		return false
+	}
+
+	// 6. Max latency filter (when configured > 0).
+	if p.MaxLatencyMs > 0 && entry.LatencyTable != nil {
+		avgMs, ok := entry.LatencyTable.OverallAverageEWMAMs()
+		if ok && avgMs > float64(p.MaxLatencyMs) {
+			return false
+		}
 	}
 
 	return true

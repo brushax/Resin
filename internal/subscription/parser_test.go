@@ -1699,6 +1699,8 @@ func TestParseGeneralSubscription_VMessURIHTTPHeader(t *testing.T) {
 				}
 			}
 		})
+	}
+}
 
 func TestParseGeneralSubscription_VMessTCPHTTPHeaderObfuscation(t *testing.T) {
 	// Regression for issue #99: vmess share links with net=tcp + type=http
