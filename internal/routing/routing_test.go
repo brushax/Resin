@@ -599,3 +599,48 @@ func TestP2C_PreferThroughputPolicy(t *testing.T) {
 		t.Fatalf("expected fast throughput node to be favored, got %d/100", counts[hFast])
 	}
 }
+
+func TestStickyLease_AutoFailoverOnNodeFailure(t *testing.T) {
+	pool, subMgr := setupPool(t)
+	h1 := makeRoutableNode(t, pool, subMgr, `{"node":"1"}`, "10.0.0.1", "cloudflare.com", 50*time.Millisecond)
+	h2 := makeRoutableNode(t, pool, subMgr, `{"node":"2"}`, "10.0.0.2", "cloudflare.com", 50*time.Millisecond)
+
+	var events []routing.LeaseEvent
+	router := makeRouter(pool, &events)
+
+	// 1. First request creates lease on node h1 or h2
+	res1, err := router.RouteRequest(platName, "test-acct", "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Normal subsequent request hits the exact same node (sticky)
+	res2, err := router.RouteRequest(platName, "test-acct", "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res2.NodeHash != res1.NodeHash {
+		t.Fatalf("expected sticky lease hit on %s, got %s", res1.NodeHash.Hex(), res2.NodeHash.Hex())
+	}
+
+	// 3. Leased node records a failure (e.g. timeout or connect error)
+	leasedEntry, _ := pool.GetEntry(res1.NodeHash)
+	leasedEntry.FailureCount.Store(1)
+
+	// 4. Next request MUST NOT blindly hit the failing node; it should auto-failover to the healthy node!
+	res3, err := router.RouteRequest(platName, "test-acct", "example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res3.NodeHash == res1.NodeHash {
+		t.Fatalf("expected auto-failover away from failing node %s, but lease blindly hit it again!", res1.NodeHash.Hex())
+	}
+
+	otherHash := h1
+	if res1.NodeHash == h1 {
+		otherHash = h2
+	}
+	if res3.NodeHash != otherHash {
+		t.Fatalf("expected failover to healthy node %s, got %s", otherHash.Hex(), res3.NodeHash.Hex())
+	}
+}

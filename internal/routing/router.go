@@ -259,6 +259,12 @@ func (r *Router) tryLeaseHit(
 		return Lease{}, RouteResult{}, false
 	}
 
+	// Auto-failover: if the leased node has recorded failures or its circuit breaker is open,
+	// do NOT blindly reuse it. Evict the lease hit to trigger dynamic failover to a healthy node.
+	if entry.FailureCount.Load() > 0 || entry.IsCircuitOpen() {
+		return Lease{}, RouteResult{}, false
+	}
+
 	newLease := current
 	newLease.LastAccessedNs = nowNs
 	r.emitLeaseEvent(LeaseEvent{
@@ -426,6 +432,10 @@ func chooseSameIPRotationCandidate(
 	plat.View().Range(func(h node.Hash) bool {
 		entry, ok := pool.GetEntry(h)
 		if !ok || entry.GetEgressIP() != targetIP {
+			return true
+		}
+		// Skip unhealthy or failing candidates during same-IP rotation
+		if entry.FailureCount.Load() > 0 || entry.IsCircuitOpen() {
 			return true
 		}
 		if fallbackHash == node.Zero {
