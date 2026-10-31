@@ -7,7 +7,9 @@ import (
 	"strconv"
 	"sync/atomic"
 
+	"github.com/Resinat/Resin/internal/agent"
 	"github.com/Resinat/Resin/internal/config"
+	"github.com/Resinat/Resin/internal/mcp"
 	"github.com/Resinat/Resin/internal/metrics"
 	"github.com/Resinat/Resin/internal/requestlog"
 	"github.com/Resinat/Resin/internal/service"
@@ -155,6 +157,19 @@ func NewServerWithAddress(
 		authed.Handle("GET /api/v1/metrics/snapshots/platform-node-pool", HandleSnapshotPlatformNodePool(metricsManager))
 		authed.Handle("GET /api/v1/metrics/snapshots/node-latency-distribution", HandleSnapshotNodeLatencyDistribution(metricsManager))
 	}
+
+	// MCP Protocol Server & Autonomous AI Copilot Agent.
+	mcpServer := mcp.NewServer(cp, requestlogRepo)
+	authed.Handle("POST /api/v1/mcp", mcpServer)
+
+	var agentStore *agent.AuditStore
+	if envCfg != nil && envCfg.LogDir != "" {
+		agentStore, _ = agent.NewAuditStore(envCfg.LogDir)
+	}
+	copilot := agent.NewCopilot(mcpServer, agentStore)
+	authed.Handle("POST /api/v1/agent/diagnose", HandleAgentDiagnose(copilot))
+	authed.Handle("GET /api/v1/agent/runs", HandleListAgentRuns(agentStore))
+	authed.Handle("GET /api/v1/agent/runs/{id}", HandleGetAgentRun(agentStore))
 
 	limitedAuthed := RequestBodyLimitMiddleware(apiMaxBodyBytes, authed)
 	mux.Handle("/api/", AuthMiddleware(adminToken, limitedAuthed))
